@@ -29,7 +29,7 @@ jobs:
       - name: Cek sandbox (wake kalau pause, cycle di menit 420)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: m_CHANGEME
+          MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
         run: |
           set -e
           python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 420
