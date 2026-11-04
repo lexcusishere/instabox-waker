@@ -2,49 +2,71 @@ name: instabox waker
 
 on:
   schedule:
-    # JANGAN di menit :00 — awal jam = puncak beban GitHub Actions.
-    # Dua entri tiap 5 menit = 24 kesempatan/jam (GitHub tetap bisa telat/melewatkan sebagian).
     - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
     - cron: "4,9,14,19,24,29,34,39,44,49,54,59 * * * *"
   workflow_dispatch: {}
 
-# Satu putaran saja pada satu waktu; jangan saling membatalkan.
 concurrency:
   group: instabox-waker
   cancel-in-progress: false
 
 permissions:
-  contents: write   # hanya dipakai job heartbeat (cegah auto-disable 60 hari)
+  contents: write
 
 jobs:
   waker:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
 
-      - name: WAKE-ONLY (tidak cycling)
+      - name: Cek + cycle sandbox sebelum max-run
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
           MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
         run: |
           set -e
-          # --safe-minutes 0 = WAKE-ONLY: hanya membangunkan sandbox yang pause sendiri.
-          #
-          # Kenapa TIDAK cycling di sini (bukti terukur 2026-11-03/04):
-          #   repo publik ini cron-nya jalan hanya ~11 kali dalam ~18 jam
-          #   (jarak antar-run rata-rata 147 menit, pernah 475 menit).
-          #   Cycler butuh run di sekitar menit 420-479 sebelum max-run 480.
-          #   Akibatnya sandbox sempat kena max-run (cooldownUntil 02:32 UTC).
-          #
-          # Cycler (suspend+resume) dijalankan di tempat lain:
-          #   * VPS / laptop nyala terus : vps-waker-setup.sh  (--safe-minutes 420)
-          #   * Google Apps Script       : google-apps-script/Code.gs (trigger 5 menit)
-          # Tugas job ini: wake kalau sandbox pause (idle), tidak lebih.
-          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 0
+          # --safe-minutes 60: cycle (suspend+resume) begitu umur run >= 60 menit.
+          # cron GitHub repo publik tidak tepat waktu (terukur: 11 run/18 jam,
+          # jarak rata-rata 147 menit, pernah 475 menit). Ambang 420 membuat run yang
+          # datang di menit 290-390 tidak melakukan apa pun -> sandbox kena max-run 480
+          # (kejadian: cooldownUntil 02:32 UTC). Ambang 60 membuat hampir setiap run
+          # me-reset window max-run. Pause manual tidak berutang cooldown.
+          # Pasangan run yang hanya beda 1 menit dilewati karena umur run < 60.
+          # Kalau nanti ada cycler lebih andal (VPS / Apps Script), set ke 0 (wake-only).
+          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 60
 
-  # Repo publik: workflow schedule otomatis dimatikan GitHub setelah 60 hari
-  # tanpa aktivitas repo. Commit berkala ini menjaga jadwal tetap hidup.
+      - name: Pastikan sandbox kembali running (self-healing)
+        env:
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+          MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
+        run: |
+          set -e
+          for i in $(seq 1 18); do
+            body=$(curl -sS -m 20 -H "X-API-Key: $INSTABOX_API_KEY" "https://api.instabox.sh/v1/machines/$MACHINE_ID" || true)
+            st=$(printf '%s' "$body" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("state",""))
+except Exception: print("")' 2>/dev/null)
+            echo "percobaan $i: state=$st"
+            if [ "$st" = "running" ]; then
+              printf '%s' "$body" | python3 -c 'import sys,json,datetime
+m=json.load(sys.stdin)
+rs=m.get("runStartedAt")
+run=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(rs.replace("Z","+00:00"))).total_seconds()/60 if rs else -1
+print("OK: running=%.0f menit dari %s menit, cooldownUntil=%s" % (run, m.get("maxRunMinutes"), m.get("cooldownUntil")))'
+              exit 0
+            fi
+            case "$st" in
+              suspended|paused|stopped)
+                echo "  -> mengirim resume"
+                curl -sS -m 45 -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H "Content-Type: application/json" -H "Idempotency-Key: gh-waker-$GITHUB_RUN_ID-$i" -d '{}' "https://api.instabox.sh/v1/machines/$MACHINE_ID/resume" || true
+                ;;
+            esac
+            sleep 10
+          done
+          echo "PERINGATAN: belum running setelah 18 percobaan - cek dashboard instabox"
+          exit 0
+
   heartbeat:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
