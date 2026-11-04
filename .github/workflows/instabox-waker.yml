@@ -27,13 +27,13 @@ jobs:
         run: |
           set -e
           # --safe-minutes 60: cycle (suspend+resume) begitu umur run >= 60 menit.
-          # cron GitHub repo publik tidak tepat waktu (terukur: 11 run/18 jam,
-          # jarak rata-rata 147 menit, pernah 475 menit). Ambang 420 membuat run yang
-          # datang di menit 290-390 tidak melakukan apa pun -> sandbox kena max-run 480
-          # (kejadian: cooldownUntil 02:32 UTC). Ambang 60 membuat hampir setiap run
-          # me-reset window max-run. Pause manual tidak berutang cooldown.
-          # Pasangan run yang hanya beda 1 menit dilewati karena umur run < 60.
-          # Kalau nanti ada cycler lebih andal (VPS / Apps Script), set ke 0 (wake-only).
+          # cron GitHub repo publik tidak tepat waktu (terukur: 11 run/18 jam, jarak
+          # rata-rata 147 menit, pernah 475 menit). Ambang 420 membuat run di menit
+          # 290-390 tidak melakukan apa pun -> sandbox kena max-run 480 (kejadian:
+          # cooldownUntil 02:32 UTC). Ambang 60 membuat hampir setiap run me-reset
+          # window max-run; pause manual tidak berutang cooldown. Pasangan run yang
+          # hanya beda 1 menit dilewati karena umur run masih < 60.
+          # Kalau nanti ada cycler lebih andal (VPS / Apps Script), set ke 0.
           python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 60
 
       - name: Pastikan sandbox kembali running (self-healing)
@@ -44,16 +44,10 @@ jobs:
           set -e
           for i in $(seq 1 18); do
             body=$(curl -sS -m 20 -H "X-API-Key: $INSTABOX_API_KEY" "https://api.instabox.sh/v1/machines/$MACHINE_ID" || true)
-            st=$(printf '%s' "$body" | python3 -c 'import sys,json
-try: print(json.load(sys.stdin).get("state",""))
-except Exception: print("")' 2>/dev/null)
+            st=$(printf '%s' "$body" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("state",""))' 2>/dev/null || true)
             echo "percobaan $i: state=$st"
             if [ "$st" = "running" ]; then
-              printf '%s' "$body" | python3 -c 'import sys,json,datetime
-m=json.load(sys.stdin)
-rs=m.get("runStartedAt")
-run=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(rs.replace("Z","+00:00"))).total_seconds()/60 if rs else -1
-print("OK: running=%.0f menit dari %s menit, cooldownUntil=%s" % (run, m.get("maxRunMinutes"), m.get("cooldownUntil")))'
+              printf '%s' "$body" | python3 -c 'import sys,json,datetime;m=json.load(sys.stdin);rs=m.get("runStartedAt");run=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(rs.replace("Z","+00:00"))).total_seconds()/60 if rs else -1;print("OK running=%.0f menit dari %s menit, cooldownUntil=%s" % (run, m.get("maxRunMinutes"), m.get("cooldownUntil")))' 2>/dev/null || true
               exit 0
             fi
             case "$st" in
