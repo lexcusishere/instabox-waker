@@ -2,11 +2,8 @@ name: instabox waker
 
 on:
   schedule:
-    # JANGAN di menit :00 — awal jam adalah puncak beban GitHub Actions dan
-    # schedule di menit itu paling sering telat/di-drop.
-    # Dua entri tiap 5 menit (offset 2 dan 4) = 24 kesempatan/jam. GitHub
-    # membatasi minimum 5 menit; beberapa entri menambah peluang kalau satu
-    # jadwal telat atau dilewati.
+    # JANGAN di menit :00 — awal jam = puncak beban GitHub Actions.
+    # Dua entri tiap 5 menit = 24 kesempatan/jam (GitHub tetap bisa telat/melewatkan sebagian).
     - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
     - cron: "4,9,14,19,24,29,34,39,44,49,54,59 * * * *"
   workflow_dispatch: {}
@@ -26,13 +23,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cek sandbox (wake kalau pause, cycle di menit 420)
+      - name: WAKE-ONLY (tidak cycling)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
           MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
         run: |
           set -e
-          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 420
+          # --safe-minutes 0 = WAKE-ONLY: hanya membangunkan sandbox yang pause sendiri.
+          #
+          # Kenapa TIDAK cycling di sini (bukti terukur 2026-11-03/04):
+          #   repo publik ini cron-nya jalan hanya ~11 kali dalam ~18 jam
+          #   (jarak antar-run rata-rata 147 menit, pernah 475 menit).
+          #   Cycler butuh run di sekitar menit 420-479 sebelum max-run 480.
+          #   Akibatnya sandbox sempat kena max-run (cooldownUntil 02:32 UTC).
+          #
+          # Cycler (suspend+resume) dijalankan di tempat lain:
+          #   * VPS / laptop nyala terus : vps-waker-setup.sh  (--safe-minutes 420)
+          #   * Google Apps Script       : google-apps-script/Code.gs (trigger 5 menit)
+          # Tugas job ini: wake kalau sandbox pause (idle), tidak lebih.
+          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 0
 
   # Repo publik: workflow schedule otomatis dimatikan GitHub setelah 60 hari
   # tanpa aktivitas repo. Commit berkala ini menjaga jadwal tetap hidup.
@@ -41,7 +50,7 @@ jobs:
     if: github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v4
-      - name: Touch heartbeat (aktivitas repo)
+      - name: Jaga scheduled workflow tetap aktif
         run: |
           set -e
           if [ -f heartbeat.txt ]; then
@@ -49,9 +58,8 @@ jobs:
           else
             age=999
           fi
-          echo "umur heartbeat: ${age} hari"
           if [ "$age" -lt 20 ]; then
-            echo "masih muda, tidak perlu commit"
+            echo "heartbeat masih muda ($age hari)"
             exit 0
           fi
           date -u +"%Y-%m-%dT%H:%M:%SZ run=$GITHUB_RUN_ID" > heartbeat.txt
