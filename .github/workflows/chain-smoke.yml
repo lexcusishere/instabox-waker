@@ -1,0 +1,33 @@
+name: chain smoke
+
+# Diagnosa manual: jalankan SATU iterasi payload rantai (persis perintah yang
+# dipakai instabox-waker-chain.yml) dan cetak output waker. Kalau muncul
+# "runStartedAt dari API ... menit berjalan", berarti payload + secret benar.
+# Aman: --safe-minutes 420, jadi tidak mungkin cycle kecuali box memang di atas 420.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chain-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Iterasi payload rantai (satu kali)
+        env:
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+          MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
+        run: |
+          set -u
+          python3 --version
+          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 420 || echo "waker exit $?"
+          echo "SMOKE_OK"
