@@ -2,9 +2,13 @@ name: instabox waker chain
 
 # CYLER UTAMA (rantai berkesinambungan).
 # Kenapa bukan cron: schedule GitHub terbukti drop job (terukur 8 run / 21 jam,
-# gap terburuk 475 menit) -> box kena max-run 480. Job ini HIDUP TERUS 5j40m
-# dengan timer 5 menit di dalamnya, lalu men-dispatch dirinya sendiri.
-# Jaring pengaman tetap: instabox-waker.yml (wake-only + net 430m).
+# 2026-11-06: maxRunMinutes free plan berubah 480 -> 120 menit (terukur: box
+# kena suspend trigger=max_run pada umur run 120,6 menit; API mesin
+# "maxRunMinutes": 120). Karena itu ambang TIDAK di-hardcode: --safe-minutes
+# auto = maxRunMinutes - margin, dibaca ulang dari API tiap iterasi.
+# margin 30 -> cycle di menit 90 (buffer 30 menit sebelum max-run).
+# Kalau plan berubah lagi (240/480/unlimited) file ini tidak perlu diedit.
+# Jaring pengaman: instabox-waker-backup.yml (auto, margin 20 -> 100m).
 
 on:
   workflow_dispatch: {}
@@ -27,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Loop 68 x 5 menit (cycle di menit 420)
+      - name: Loop 68 x 5 menit (cycle di maxRun - margin)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
           MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
@@ -35,7 +39,7 @@ jobs:
           set -u
           for i in $(seq 1 68); do
             echo "=== iterasi $i/68 $(date -u +%FT%TZ) ==="
-            python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 420 || echo "waker exit $?"
+            python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes auto --margin 30 || echo "waker exit $?"
             if [ "$i" -lt 68 ]; then sleep 300; fi
           done
 
