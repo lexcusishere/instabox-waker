@@ -3,11 +3,25 @@ name: chain smoke
 # Diagnosa manual: jalankan SATU iterasi payload rantai (persis perintah yang
 # dipakai instabox-waker-chain.yml) dan cetak output waker. Kalau muncul
 # "runStartedAt dari API ... menit berjalan", berarti payload + secret benar.
-# Aman: --safe-minutes auto (= maxRun - 30), jadi tidak mungkin cycle kecuali
-# box memang sudah lewat ambang itu. maxRun dibaca dari API, bukan hardcode.
+#
+# Default aman: --safe-minutes auto (= maxRun - 30), jadi tidak mungkin cycle
+# kecuali box memang sudah lewat ambang itu. maxRun dibaca dari API, bukan hardcode.
+#
+# Untuk MEMBUKTIKAN jalur suspend+resume tanpa menunggu 90 menit, dispatch
+# dengan input safe_minutes=1: box di-suspend+resume sekali (window reset,
+# tanpa cooldown) dan log-nya bisa diunduh sebagai bukti.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      safe_minutes:
+        description: "ambang cycle: 'auto' atau angka menit (1 = paksa cycle sekarang)"
+        required: false
+        default: "auto"
+      margin:
+        description: "margin untuk mode auto (menit)"
+        required: false
+        default: "30"
 
 permissions:
   contents: read
@@ -27,8 +41,13 @@ jobs:
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
           MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
+          SAFE: ${{ inputs.safe_minutes }}
+          MARGIN: ${{ inputs.margin }}
         run: |
           set -u
+          SAFE="${SAFE:-auto}"
+          MARGIN="${MARGIN:-30}"
           python3 --version
-          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes auto --margin 30 || echo "waker exit $?"
+          echo "safe-minutes=$SAFE margin=$MARGIN"
+          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes "$SAFE" --margin "$MARGIN" || echo "waker exit $?"
           echo "SMOKE_OK"
