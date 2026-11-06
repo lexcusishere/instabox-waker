@@ -3,7 +3,8 @@ name: chain smoke
 # Diagnosa manual: jalankan SATU iterasi payload rantai (persis perintah yang
 # dipakai instabox-waker-chain.yml) dan cetak output waker. Kalau muncul
 # "runStartedAt dari API ... menit berjalan", berarti payload + secret benar.
-# Aman: --safe-minutes 420, jadi tidak mungkin cycle kecuali box memang di atas 420.
+# Aman: --safe-minutes auto (= maxRun - 30), jadi tidak mungkin cycle kecuali
+# box memang sudah lewat ambang itu. maxRun dibaca dari API, bukan hardcode.
 
 on:
   workflow_dispatch: {}
@@ -29,5 +30,5 @@ jobs:
         run: |
           set -u
           python3 --version
-          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 420 || echo "waker exit $?"
+          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes auto --margin 30 || echo "waker exit $?"
           echo "SMOKE_OK"
