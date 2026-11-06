@@ -1,6 +1,23 @@
 #!/usr/bin/env python3
 """
-external-waker — solusi untuk MAX-RUN instabox (free plan: 480 menit = 8 jam).
+external-waker v2 — penjaga max-run instabox (free plan).
+
+PERUBAHAN v2 (2026-11-06) — PENTING
+  maxRunMinutes free plan TIDAK LAGI 480 menit. Mesin ini terukur 120 menit
+  (8 jam -> 2 jam; API mesin: "maxRunMinutes": 120, dan `operations[]` mencatat
+  suspend trigger=max_run pada umur run 120,6 menit). Dokumentasi instabox.sh
+  (docs/limits.md, docs/idle-suspend.md) masih menulis 480 — DOKUMENTASI BASI.
+  Sumber kebenaran satu-satunya: GET /v1/machines/{id} -> maxRunMinutes.
+
+  Karena itu ambang cycling TIDAK BOLEH di-hardcode. Default sekarang
+  --safe-minutes auto = maxRunMinutes - margin (margin 30), dihitung ULANG
+  setiap kali script jalan. Kalau plan berubah lagi (240/480/unlimited),
+  script ikut sendiri tanpa diedit.
+
+  Tambahan pengaman: --hard-margin (default 10). Walaupun soft cycling
+  dimatikan (--safe-minutes 0) atau salah set terlalu besar, script tetap
+  suspend+resume saat run mencapai maxRun - hard_margin, supaya box tidak
+  pernah kena hukuman cooldown max-run. Matikan dengan --no-hard-guard.
 
 KENAPA HARUS DARI LUAR?
   Max-run mem-pause sandbox walau sedang aktif. Setelah ter-pause, tidak ada
@@ -8,16 +25,15 @@ KENAPA HARUS DARI LUAR?
   harus berada DI LUAR box: laptopmu, VPS lain, GitHub Actions, cron HP, dll.
 
 STRATEGI ANTI-COOLDOWN (ini inti trik-nya)
-  Doc instabox: cooldown setelah max-run pause bertingkat di free plan:
+  Cooldown setelah max-run pause bertingkat di free plan:
      pause max-run ke-1 : 5-20 menit
      pause max-run ke-2 : 60-75 menit     <-- hukuman
      pause max-run ke-3+: 120-135 menit   <-- makin sakit
   TAPI: "The count starts over when a run ends with no cooldown owed
   (idle pause, or YOU PAUSE OR STOP the machine)".
-  => Jadi JANGAN biarkan box kena max-run. Sebelum 480 menit, kita SUSPEND
+  => Jangan biarkan box kena max-run. Sebelum window habis, kita SUSPEND
      sendiri dari luar (manual pause = tidak ada cooldown, counter balik ke 0),
-     lalu langsung RESUME. Run timer mulai dari 0 lagi -> window 480 menit baru.
-  Dengan pola ini kamu dapat ~24/7 tanpa pernah kena hukuman cooldown.
+     lalu langsung RESUME. Run timer mulai dari 0 lagi -> window baru.
 
 CARA PAKAI
   export INSTABOX_API_KEY=ibk_xxx          # buat di dashboard > API keys
@@ -25,17 +41,14 @@ CARA PAKAI
   # atau biarkan dia cari sendiri kalau cuma punya 1 mesin:
   python3 external-waker.py
 
-  Dijalankan terus (systemd/cron/tmux) di mesin LUAR. Contoh unit systemd:
-      [Unit] Description=instabox external waker
-      [Service] Environment=INSTABOX_API_KEY=ibk_xxx
-        ExecStart=/usr/bin/python3 /path/external-waker.py --machine m_xxx
-        Restart=always
-      [Install] WantedBy=multi-user.target
-
 OPSI
   --machine ID|NAMA     id/name sandbox (default: auto kalau akunmu hanya punya 1)
-  --safe-minutes N      suspend+resume sendiri saat run mencapai N menit (default 450,
-                        harus < max-run 480). Set 0 untuk mematikan trik ini.
+  --safe-minutes N|auto suspend+resume sendiri saat run mencapai N menit.
+                        default "auto" = maxRunMinutes - margin.
+                        0 = matikan soft cycling (hard guard tetap jalan).
+  --margin N            jarak aman untuk mode auto (default 30 menit)
+  --hard-margin N       pengaman terakhir: cycle di maxRun - N (default 10)
+  --no-hard-guard       matikan pengaman terakhir
   --poll N              detik antar cek (default 120)
   --cooldown-margin N   tambahan detik setelah cooldownUntil lewat (default 30)
   --once                satu kali cek lalu keluar (buat cron / debugging)
@@ -165,10 +178,31 @@ def do(key, mid, action, dry, wait=True):
     return False
 
 
+def cycle(key, mid, dry, run_min, maxrun, why):
+    """suspend+resume sendiri: pause manual tidak berutang cooldown, run timer reset."""
+    log(f"run {run_min:.0f}m / maxRun {maxrun}m — {why} -> suspend+resume SENDIRI "
+        f"(hindari hukuman cooldown max-run)")
+    if do(key, mid, "suspend", dry):
+        time.sleep(10)
+        ok = do(key, mid, "resume", dry)
+        if ok:
+            log(f"window {maxrun} menit baru dimulai (runStartedAt di-reset)")
+        else:
+            log("resume GAGAL — biarkan percobaan berikutnya / self-healing job yang membangunkan")
+        return ok
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--machine", default=os.environ.get("INSTABOX_MACHINE"))
-    ap.add_argument("--safe-minutes", type=float, default=450.0)
+    ap.add_argument("--safe-minutes", default="auto",
+                    help='"auto" (= maxRunMinutes - margin) atau angka menit; 0 = matikan soft cycling')
+    ap.add_argument("--margin", type=float, default=30.0,
+                    help="jarak aman (menit) untuk --safe-minutes auto")
+    ap.add_argument("--hard-margin", type=float, default=10.0,
+                    help="pengaman terakhir: cycle di maxRun - N menit")
+    ap.add_argument("--no-hard-guard", action="store_true")
     ap.add_argument("--poll", type=int, default=120)
     ap.add_argument("--cooldown-margin", type=int, default=30)
     ap.add_argument("--once", action="store_true")
@@ -226,33 +260,56 @@ def main():
                 # dan box keburu kena max-run (cooldown).
                 rs = body.get("runStartedAt")
                 if rs:
-                    try:
-                        import datetime as _dt
-                        t = _dt.datetime.fromisoformat(str(rs).replace("Z", "+00:00"))
+                    t = parse_ts(rs)
+                    if t:
                         run_started = t.timestamp()
                         log(f"runStartedAt dari API: {rs} ({(time.time()-run_started)/60:.0f} menit berjalan)")
-                    except Exception as e:
-                        log(f"runStartedAt tidak bisa diparse ({e}), fallback ke waktu lokal")
+                    else:
+                        log(f"runStartedAt tidak bisa diparse ({rs}), fallback ke waktu lokal")
                         run_started = time.time()
                 else:
                     run_started = time.time()
             run_min = (time.time() - run_started) / 60.0
-            if a.safe_minutes and run_min >= a.safe_minutes:
-                log(f"run {run_min:.0f} menit >= safe {a.safe_minutes:.0f} menit — "
-                    f"suspend+resume SENDIRI (hindari hukuman cooldown max-run)")
-                if do(key, mid, "suspend", a.dry_run):
-                    time.sleep(10)
-                    do(key, mid, "resume", a.dry_run)
-                    run_started = time.time()
-                    log("window 480 menit baru dimulai")
+
+            # -------- tentukan ambang: soft (safe) + hard guard --------
+            unlimited = (maxrun is None or int(maxrun) < 0)
+            safe = None
+            if str(a.safe_minutes).strip().lower() == "auto":
+                if not unlimited and int(maxrun) > 0:
+                    safe = max(5.0, float(maxrun) - a.margin)
             else:
-                if a.safe_minutes:
-                    log(f"run {run_min:.0f} menit — masih di bawah safe {a.safe_minutes:.0f}, "
-                        f"sisa ~{a.safe_minutes - run_min:.0f} menit")
-                else:
-                    left = (maxrun - run_min) if maxrun else float("nan")
-                    log(f"mode watchdog (safe 0): tidak cycling. run {run_min:.0f} menit, "
-                        f"sisa ~{left:.0f} menit sebelum max-run")
+                try:
+                    safe = float(a.safe_minutes)
+                except ValueError:
+                    safe = None
+                if safe is not None and safe <= 0:
+                    safe = None
+
+            hard = None
+            if not a.no_hard_guard and not unlimited and maxrun and int(maxrun) > 0:
+                hard = max(1.0, float(maxrun) - a.hard_margin)
+
+            if safe and not unlimited and safe >= float(maxrun):
+                log(f"PERINGATAN: safe ({safe:.0f}m) >= maxRun ({maxrun}m) — "
+                    f"soft cycling tidak akan pernah kena; pakai --safe-minutes auto")
+
+            if unlimited:
+                log(f"maxRun=-1 (unlimited) — tidak perlu cycling. run {run_min:.0f} menit")
+            elif safe and run_min >= safe:
+                cycle(key, mid, a.dry_run, run_min, maxrun, f"run >= safe {safe:.0f}m")
+                run_started = time.time()
+            elif hard and run_min >= hard:
+                cycle(key, mid, a.dry_run, run_min, maxrun,
+                      f"HARD GUARD: run >= maxRun-{a.hard_margin:.0f} ({hard:.0f}m)")
+                run_started = time.time()
+            elif safe:
+                log(f"run {run_min:.0f} menit — di bawah safe {safe:.0f}m "
+                    f"(cycle dalam ~{safe - run_min:.0f} menit, max-run {maxrun}m)")
+            else:
+                left = (float(maxrun) - run_min) if maxrun else float("nan")
+                log(f"mode watchdog (soft cycling mati): run {run_min:.0f} menit, "
+                    f"sisa ~{left:.0f} menit sebelum max-run"
+                    + (f", hard guard di {hard:.0f}m" if hard else ", TANPA hard guard"))
 
         if a.once:
             return
