@@ -23,7 +23,7 @@ jobs:
       - name: Wake + jaring pengaman cycler (430m)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
+          MACHINE_IDS: ${{ vars.INSTABOX_MACHINE_IDS }}
         run: |
           set -e
           # PEMBAGIAN PERAN (penting):
@@ -37,21 +37,36 @@ jobs:
           #         box sebelum max-run 480 (jadi tidak perlu cooldown 5-120 menit).
           # Kalau Apps Script terbukti andal beberapa hari dan kamu mau job ini
           # benar-benar pasif, ubah 430 -> 0 (wake-only murni).
-          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes 430
+          IDS_RAW="${MACHINE_IDS:-}"
+          if [ -z "$IDS_RAW" ]; then echo "MACHINE_IDS kosong - isi repo variable INSTABOX_MACHINE_IDS"; exit 1; fi
+          IFS=',' read -ra IDS <<< "$IDS_RAW"
+          for MID in "${IDS[@]}"; do
+            MID="$(printf '%s' "$MID" | tr -d '[:space:]')"
+            [ -n "$MID" ] || continue
+            echo "--- mesin $MID ---"
+            python3 external-waker.py --machine "$MID" --once --safe-minutes 430 || echo "waker $MID exit $?"
+          done
 
       - name: Pastikan sandbox kembali running (self-healing)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
+          MACHINE_IDS: ${{ vars.INSTABOX_MACHINE_IDS }}
         run: |
           set -e
-          for i in $(seq 1 18); do
+          IDS_RAW="${MACHINE_IDS:-}"
+          if [ -z "$IDS_RAW" ]; then echo "MACHINE_IDS kosong"; exit 1; fi
+          IFS=',' read -ra IDS <<< "$IDS_RAW"
+          for MACHINE_ID in "${IDS[@]}"; do
+            MACHINE_ID="$(printf '%s' "$MACHINE_ID" | tr -d '[:space:]')"
+            [ -n "$MACHINE_ID" ] || continue
+            echo "=== heal $MACHINE_ID ==="
+            for i in $(seq 1 18); do
             body=$(curl -sS -m 20 -H "X-API-Key: $INSTABOX_API_KEY" "https://api.instabox.sh/v1/machines/$MACHINE_ID" || true)
             st=$(printf '%s' "$body" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("state",""))' 2>/dev/null || true)
             echo "percobaan $i: state=$st"
             if [ "$st" = "running" ]; then
               printf '%s' "$body" | python3 -c 'import sys,json,datetime;m=json.load(sys.stdin);rs=m.get("runStartedAt");run=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(rs.replace("Z","+00:00"))).total_seconds()/60 if rs else -1;print("OK running=%.0f menit dari %s menit, cooldownUntil=%s" % (run, m.get("maxRunMinutes"), m.get("cooldownUntil")))' 2>/dev/null || true
-              exit 0
+              break
             fi
             case "$st" in
               suspended|paused|stopped)
@@ -60,8 +75,9 @@ jobs:
                 ;;
             esac
             sleep 10
+            done
           done
-          echo "PERINGATAN: belum running setelah 18 percobaan - cek dashboard instabox"
+          echo "selesai: semua mesin dicek"
           exit 0
 
   heartbeat:

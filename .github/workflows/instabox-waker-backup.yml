@@ -37,12 +37,21 @@ jobs:
       - name: Loop 68 x 5 menit (cycle di maxRun-20, di belakang rantai utama)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
+          MACHINE_IDS: ${{ vars.INSTABOX_MACHINE_IDS }}
         run: |
           set -u
+          IDS_RAW="${MACHINE_IDS:-}"
+          if [ -z "$IDS_RAW" ]; then echo "MACHINE_IDS kosong - isi repo variable INSTABOX_MACHINE_IDS"; exit 1; fi
+          echo "daftar mesin: $IDS_RAW"
           for i in $(seq 1 68); do
             echo "=== backup iterasi $i/68 $(date -u +%FT%TZ) ==="
-            python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes auto --margin 20 || echo "waker exit $?"
+            IFS=',' read -ra IDS <<< "$IDS_RAW"
+            for MID in "${IDS[@]}"; do
+              MID="$(printf '%s' "$MID" | tr -d '[:space:]')"
+              [ -n "$MID" ] || continue
+              echo "--- mesin $MID ---"
+              python3 external-waker.py --machine "$MID" --once --safe-minutes auto --margin 20 || echo "waker $MID exit $?"
+            done
             if [ "$i" -lt 68 ]; then sleep 300; fi
           done
 

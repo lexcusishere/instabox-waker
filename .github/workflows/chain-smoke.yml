@@ -40,7 +40,7 @@ jobs:
       - name: Iterasi payload rantai (satu kali)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
+          MACHINE_IDS: ${{ vars.INSTABOX_MACHINE_IDS }}
           SAFE: ${{ inputs.safe_minutes }}
           MARGIN: ${{ inputs.margin }}
         run: |
@@ -49,5 +49,13 @@ jobs:
           MARGIN="${MARGIN:-30}"
           python3 --version
           echo "safe-minutes=$SAFE margin=$MARGIN"
-          python3 external-waker.py --machine "$MACHINE_ID" --once --safe-minutes "$SAFE" --margin "$MARGIN" || echo "waker exit $?"
+          IDS_RAW="${MACHINE_IDS:-}"
+          if [ -z "$IDS_RAW" ]; then echo "MACHINE_IDS kosong - isi repo variable INSTABOX_MACHINE_IDS"; exit 1; fi
+          IFS=',' read -ra IDS <<< "$IDS_RAW"
+          for MID in "${IDS[@]}"; do
+            MID="$(printf '%s' "$MID" | tr -d '[:space:]')"
+            [ -n "$MID" ] || continue
+            echo "--- mesin $MID ---"
+            python3 external-waker.py --machine "$MID" --once --safe-minutes "$SAFE" --margin "$MARGIN" || echo "waker $MID exit $?"
+          done
           echo "SMOKE_OK"
