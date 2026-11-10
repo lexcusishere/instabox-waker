@@ -17,7 +17,11 @@ name: instabox waker backup
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "9,19,29,39,49,59 * * * *"   # bootstrap saja (kalau rantai putus)
+    # 2026-11-10: akun ini ternyata hanya boleh 1 job Actions bersamaan.
+    # Cron 10 menit membuat job backup merebut slot dan rantai utama tidak pernah
+    # mulai. Karena itu backup turun jadi bootstrap darurat tiap 6 jam: dia hanya
+    # hidup kalau rantai benar-benar mati, dan tidak pernah berebut dengan rantai.
+    - cron: "0 */6 * * *"   # bootstrap darurat (kalau rantai putus)
 
 concurrency:
   group: instabox-waker-backup
