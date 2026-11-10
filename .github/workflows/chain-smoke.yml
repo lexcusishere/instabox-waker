@@ -40,7 +40,7 @@ jobs:
       - name: Iterasi payload rantai (satu kali)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
+          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
           SAFE: ${{ inputs.safe_minutes }}
           MARGIN: ${{ inputs.margin }}
         run: |

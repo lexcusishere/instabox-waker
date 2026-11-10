@@ -23,7 +23,7 @@ jobs:
       - name: Wake + jaring pengaman cycler (430m)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
+          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
         run: |
           set -e
           # PEMBAGIAN PERAN (penting):
@@ -42,7 +42,7 @@ jobs:
       - name: Pastikan sandbox kembali running (self-healing)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
+          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
         run: |
           set -e
           for i in $(seq 1 18); do

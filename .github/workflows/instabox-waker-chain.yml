@@ -34,7 +34,7 @@ jobs:
       - name: Loop 68 x 5 menit (cycle di maxRun - margin)
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-          MACHINE_ID: m_agqz5d4cjfox6el7fnwmwpcztq
+          MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
         run: |
           set -u
           for i in $(seq 1 68); do

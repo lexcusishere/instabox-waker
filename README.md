@@ -59,7 +59,7 @@ berstatus `in_progress`, tidak ada `queued` menumpuk.
 ```bash
 cd /data/workspace/instabox-keepalive && set -a && . ./api.env && set +a
 curl -s -H "X-API-Key: $INSTABOX_API_KEY" \
-  "https://api.instabox.sh/v1/machines/m_agqz5d4cjfox6el7fnwmwpcztq/logs?limit=1" \
+  "https://api.instabox.sh/v1/machines/m_agq4deh4qasrdcchs4amnqhele/logs?limit=1" \
  | python3 -c 'import sys,json;d=json.load(sys.stdin);[print(o["createdAt"][:19],o["type"],o.get("trigger")) for o in d["operations"] if o["type"] in ("suspend","resume")][-10:]'
 ```
 
